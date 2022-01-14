@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 from progressbar import progressbar as pb
 
-'''
+
 # BERT
 from transformers import AutoTokenizer, AutoModel, BertModel
 tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
@@ -47,3 +47,4 @@ attention_weights = mask.expand(12, 1, 4096, 12, 513)
 outputs = model(input_ids, attention_mask=attention_mask, global_attention_mask=global_attention_mask, attention_weights=attention_weights)
 sequence_output = outputs.last_hidden_state
 pooled_output = outputs.pooler_output
+'''

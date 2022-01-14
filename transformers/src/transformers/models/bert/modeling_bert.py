@@ -224,7 +224,7 @@ class BertEmbeddings(nn.Module):
 
 
 class BertSelfAttention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, layer_id, config):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
@@ -247,6 +247,7 @@ class BertSelfAttention(nn.Module):
             self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
         self.is_decoder = config.is_decoder
+        self.layer_id = layer_id
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -262,6 +263,7 @@ class BertSelfAttention(nn.Module):
         encoder_attention_mask=None,
         past_key_value=None,
         output_attentions=False,
+        attention_weights=None,
     ):
         mixed_query_layer = self.query(hidden_states)
 
@@ -328,6 +330,9 @@ class BertSelfAttention(nn.Module):
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
 
+        if attention_weights is not None:
+            attention_scores += attention_weights[self.layer_id]
+
         # Normalize the attention scores to probabilities.
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
@@ -370,9 +375,9 @@ class BertSelfOutput(nn.Module):
 
 
 class BertAttention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, layer_id, config):
         super().__init__()
-        self.self = BertSelfAttention(config)
+        self.self = BertSelfAttention(layer_id, config)
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
 
@@ -403,6 +408,7 @@ class BertAttention(nn.Module):
         encoder_attention_mask=None,
         past_key_value=None,
         output_attentions=False,
+        attention_weights=None,
     ):
         self_outputs = self.self(
             hidden_states,
@@ -412,6 +418,7 @@ class BertAttention(nn.Module):
             encoder_attention_mask,
             past_key_value,
             output_attentions,
+            attention_weights=attention_weights,
         )
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
@@ -448,17 +455,17 @@ class BertOutput(nn.Module):
 
 
 class BertLayer(nn.Module):
-    def __init__(self, config):
+    def __init__(self, layer_id, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = BertAttention(config)
+        self.attention = BertAttention(layer_id, config)
         self.is_decoder = config.is_decoder
         self.add_cross_attention = config.add_cross_attention
         if self.add_cross_attention:
             if not self.is_decoder:
                 raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
-            self.crossattention = BertAttention(config)
+            self.crossattention = BertAttention(layer_id, config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
@@ -471,6 +478,7 @@ class BertLayer(nn.Module):
         encoder_attention_mask=None,
         past_key_value=None,
         output_attentions=False,
+        attention_weights=None
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -480,6 +488,7 @@ class BertLayer(nn.Module):
             head_mask,
             output_attentions=output_attentions,
             past_key_value=self_attn_past_key_value,
+            attention_weights=attention_weights,
         )
         attention_output = self_attention_outputs[0]
 
@@ -536,7 +545,7 @@ class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([BertLayer(layer_id, config) for layer_id in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
     def forward(
@@ -551,6 +560,7 @@ class BertEncoder(nn.Module):
         output_attentions=False,
         output_hidden_states=False,
         return_dict=True,
+        attention_weights=None,
     ):
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -574,7 +584,7 @@ class BertEncoder(nn.Module):
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
+                        return module(*inputs, past_key_value, output_attentions, attention_weights)
 
                     return custom_forward
 
@@ -595,6 +605,7 @@ class BertEncoder(nn.Module):
                     encoder_attention_mask,
                     past_key_value,
                     output_attentions,
+                    attention_weights=attention_weights
                 )
 
             hidden_states = layer_outputs[0]
