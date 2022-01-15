@@ -344,8 +344,8 @@ class BertSelfAttention(nn.Module):
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
 
-        print('attention_probs', attention_probs)
-        print('value_layer', value_layer)
+        #print('attention_probs', attention_probs)
+        #print('value_layer', value_layer)
 
         context_layer = torch.matmul(attention_probs, value_layer)
 
